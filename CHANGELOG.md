@@ -6,6 +6,21 @@ Format: date-based versioning (`YYYY.M.DD`). Each release includes a sequential 
 
 ---
 
+## [2026.3.10-1] - 2026-03-10
+
+### Updated — Sync with Official API Docs
+- **Chain identifiers expanded** from 10 → 33 chains, split into Order Mode (7 chains) and Market Data (32 chains) tables
+- **Gasless thresholds unified** — all chains $5 USD, Morph $1 USD (previously documented as "~$5-6")
+- **Error codes completed** — full 80000-80015 error code table with descriptions and actions
+- **Security audit labelName reference** — complete Solana (11 checks) and EVM (17 checks) mapping tables added to market-data.md
+- **Token info social fields** documented — twitter, website, telegram, whitepaper, about
+- **K-line buy/sell breakdown fields** documented — buyTurnover, sellTurnover, buyAmount, sellAmount
+- **fromAmount human-readable** explicitly documented in order quote section
+- **fee.gasFee** and EIP-7702 response fields added to order quote docs
+- **README updated** — supported chains split (order vs market data), capabilities table expanded, gasless description updated to include Solana
+
+---
+
 ## [2026.3.9-3] - 2026-03-09
 
 ### Fixed
@@ -77,8 +92,8 @@ Format: date-based versioning (`YYYY.M.DD`). Each release includes a sequential 
 - Market field in order confirmation summary (e.g., `bgwAggregator`, `bkbridgev3.liqbridge`)
 
 ### Fixed
-- Solana gasless status: changed from "❌ Not working (bug)" to "❌ Not supported" — `no_gas` is not available on Solana (quote returns `features: []`)
-- Gasless rule: only use `no_gas` when quote returns it in `features` array (API accepts flag without validation but execution fails)
+- Solana gasless status: changed from "❌ Not working (bug)" to "❌ Not supported" — gasless is not available on Solana (quote returns `features: []`)
+- Gasless rule: only use gasless when quote returns `"no_gas"` in `features` array (API accepts flag without validation but execution fails)
 - Cross-chain minimum amounts: Solana $10, Morph $5 (previously documented as ~$2 for all)
 
 ---
@@ -92,7 +107,7 @@ Format: date-based versioning (`YYYY.M.DD`). Each release includes a sequential 
   - `order-submit` — submit signed transactions
   - `order-status` — query order lifecycle status
 - **Cross-chain swaps**: swap tokens between different chains in one order (e.g., USDC on Base → USDT on Polygon)
-- **Gasless mode (no_gas)**: pay gas with input token, no native token needed (EVM only)
+- **Gasless mode**: pay gas with input token, no native token needed (EVM only)
 - **EIP-7702 support**: EIP-712 typed data signing for gasless execution
 - **Order status tracking**: full lifecycle (init → processing → success/failed/refunding/refunded)
 - **B2B fee splitting**: `feeRate` parameter for partner commission

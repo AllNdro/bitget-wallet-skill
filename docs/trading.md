@@ -24,7 +24,7 @@ Before executing any swap, the agent should silently run risk checks and present
 **Order Mode flow (default):**
 
 ```
-4. order-quote  → Get price, market, check no_gas support
+4. order-quote  → Get price, market, check gasless support
 5. order-create → Create order (returns unsigned data)
 6. order-status → Get accurate toAmount
 7. PRESENT      → Show confirmation (MANDATORY, wait for user)
@@ -57,7 +57,7 @@ On EVM chains (Ethereum, BNB Chain, Base, Arbitrum, Optimism), tokens require an
 - USDT on some chains (notably Ethereum mainnet) requires setting allowance to 0 before setting a new value.
 - **Native tokens** (ETH, SOL, BNB) do not need approval — only ERC-20/SPL tokens.
 - Approval is a one-time cost per token per router. Once approved with max amount, subsequent swaps of the same token skip this step.
-- **Order Mode gasless**: When using Order Mode with `no_gas`, approval is **automatically bundled** into the gasless transaction — the agent does NOT need to handle approval separately. The backend includes the approve call in the EIP-7702 delegated execution.
+- **Order Mode gasless**: When using Order Mode with gasless, approval is **automatically bundled** into the gasless transaction — the agent does NOT need to handle approval separately. The backend includes the approve call in the EIP-7702 delegated execution.
 - **Solana does not use approvals** — this applies only to EVM chains.
 
 Include the approval status in the confirmation summary when relevant:
@@ -119,7 +119,7 @@ Transaction costs vary by chain. Be aware of these when presenting swap quotes:
 The Order Mode API (`order-*` commands) is the **recommended** way to execute swaps. It supports everything the legacy `swap-*` flow does, plus:
 
 - **Cross-chain swaps** — swap tokens between different chains in one order (e.g., USDC on Base → USDT on BNB Chain)
-- **Gasless transactions (no_gas)** — pay gas fees using the input token instead of requiring native tokens
+- **Gasless transactions** — pay gas fees using the input token instead of requiring native tokens
 - **Order tracking** — full order lifecycle with status updates, refund handling
 - **EIP-7702 support** — advanced signature mode for gasless execution
 - **B2B fee splitting** — partners can set custom fee rates (`feeRate`)
@@ -129,14 +129,14 @@ The Order Mode API (`order-*` commands) is the **recommended** way to execute sw
 | Scenario | Use |
 |----------|-----|
 | Cross-chain swap | Order Mode (only option) |
-| No native token for gas | Order Mode with `no_gas` |
+| No native token for gas | Order Mode with gasless |
 | Same-chain swap | Either (Order Mode recommended) |
 | Need order tracking/refunds | Order Mode |
 
 ### Order Flow: 4-Step Process
 
 ```
-1. order-quote   → Get price, recommended market, check no_gas support
+1. order-quote   → Get price, recommended market, check gasless support
 2. order-create  → Create order, receive unsigned tx/signature data
 3. (wallet signs the transaction or EIP-712 typed data)
 4. order-submit  → Submit signed tx, get orderId confirmation
@@ -156,10 +156,16 @@ Key fields to check:
 | `fee.totalAmountInUsd` | Total fee in USD |
 | `fee.appFee` | Partner's fee portion |
 | `fee.platformFee` | Platform fee portion |
+| `fee.gasFee` | Gas fee portion (when applicable) |
 | `features: ["no_gas"]` | If present, gasless mode is available |
 | `eip7702Bindend` | Whether address has EIP-7702 binding |
+| `eip7702Contract` | Bound contract address (if bound) |
+| `eip7702IsBgw` | Whether bound to BGW's EIP-7702 contract |
 
-### Gasless Mode (no_gas)
+**Important: `fromAmount` is human-readable** (e.g., `"2.0"` = 2 tokens). Do NOT pass raw amounts with decimals (e.g., `2000000` for 6-decimal USDC). All `toAmount`/`fromAmount` values in responses are also human-readable.
+| `eip7702Bindend` | Whether address has EIP-7702 binding |
+
+### Gasless Mode
 
 Gasless mode uses EIP-7702 delegation — a backend relayer constructs and pays for the transaction on your behalf. The gas cost is deducted from the input token amount.
 
@@ -172,18 +178,18 @@ Gasless mode uses EIP-7702 delegation — a backend relayer constructs and pays 
 
 **Auto-detection logic:**
 ```
-Default: always use no_gas when available.
+Default: always use gasless when available.
 
 if order-quote returns features: ["no_gas"]:
     auto-apply --feature no_gas to order-create
 elif user has no native token for gas:
     warn: "Insufficient gas. This route does not support gasless mode."
 else:
-    proceed without no_gas (normal tx mode)
+    proceed without gasless (normal tx mode)
 ```
 
 **⚠️ Important: `features` in order-quote is not always reliable.**
-Some routes have a minimum amount threshold for gasless support. For example, Solana gasless requires ~$5-6 USD minimum — below this, `features: []` is returned. Always check the `features` field from `order-quote` before using `--feature no_gas`. If `features` is empty and the wallet has zero native token balance, inform the user they need to either increase the amount or acquire native tokens for gas.
+All chains have a minimum amount threshold for gasless: **$5 USD** (Morph: **$1 USD**). Below this threshold, `features: []` is returned. Always check the `features` field from `order-quote` before using `--feature no_gas`. If `features` is empty and the wallet has zero native token balance, inform the user they need to either increase the amount or acquire native tokens for gas.
 
 ### Order Create Response: Two Modes
 
@@ -382,9 +388,9 @@ When a cross-chain order fails after the source transaction is already on-chain,
 
 1. **Cross-chain minimum amount**: Varies by chain. EVM chains: ~$1-5. Solana: $10 minimum (liqBridge only, no CCTP). Morph: $5 minimum. Below minimum returns `80002 amount too low`.
 
-2. **`no_gas` requires quote support**: Only use `--feature no_gas` when `order-quote` returns `"no_gas"` in the `features` array. The API may accept the flag at create time without validation, but the backend will fail to execute. Solana supports `no_gas` above a minimum amount threshold (~$5-6 USD); below that, `features` returns `[]`.
+2. **Gasless requires quote support**: Only use `--feature no_gas` when `order-quote` returns `"no_gas"` in the `features` array. The API may accept the flag at create time without validation, but the backend will fail to execute. All chains have a minimum amount threshold ($5 USD, Morph $1); below that, `features` returns `[]`.
 
-3. **Base same-chain without no_gas**: `order-create` on Base without `--feature no_gas` returns `80000 system error` when the wallet has no ETH. This is because the API can't construct a normal tx for an account with no gas. Solution: use `no_gas`.
+3. **Base same-chain without gasless**: `order-create` on Base without `--feature no_gas` returns `80000 system error` when the wallet has no ETH. This is because the API can't construct a normal tx for an account with no gas. Solution: use gasless (`--feature no_gas`).
 
 4. **EIP-712 hash mismatch**: Do NOT use `encode_typed_data` from eth-account or similar libraries. Their encoding of nested `Call[]` with `bytes callData` differs from the API/contract implementation. Always sign the API-provided `hash` directly.
 
@@ -408,13 +414,22 @@ When a cross-chain order fails after the source transaction is already on-chain,
 
 | Code | Meaning | Action |
 |------|---------|--------|
-| `80001` | Insufficient balance | Check balance, suggest smaller amount |
-| `80002` | Amount too low | Increase amount |
-| `80003` | Amount too high | Decrease amount |
+| `80000` | System internal error | Retry or contact support |
+| `80001` | Insufficient token balance | Check balance, suggest smaller amount |
+| `80002` | Amount below minimum | Increase amount (check cross-chain limits table) |
+| `80003` | Amount above maximum | Decrease amount |
 | `80004` | Order expired | Re-create order |
 | `80005` | Insufficient liquidity | Try different route or smaller amount |
-| `80006` | Invalid request | Check parameters |
-| `80007` | Signature mismatch | Re-sign with correct data |
+| `80006` | Invalid request parameters | Check format, required fields, value ranges |
+| `80007` | Invalid or unknown Partner | Check Partner-Code header |
+| `80008` | Reverse quote calculation failed | PayFi Swap minAmountOut mode only |
+| `80009` | Token info lookup failed | Token may not exist or service issue |
+| `80010` | Price or gas price fetch failed | Retry later |
+| `80011` | Calldata generation failed | PayFi Swap only |
+| `80012` | Quote failed (no available routes) | Try different token pair or amount |
+| `80013` | Unsupported chain | Check supported chains table |
+| `80014` | Order not found | Verify orderId |
+| `80015` | Order already submitted | Do not re-submit; check status instead |
 
 ### Security Considerations (Order Mode)
 
@@ -440,15 +455,15 @@ When a cross-chain order fails after the source transaction is already on-chain,
 
 ### Supported Chains (Order Mode)
 
-| Chain | Code | Same-chain | Cross-chain |
-|-------|------|-----------|-------------|
-| Ethereum | `eth` | ✅ | ✅ |
-| Solana | `sol` | ✅ | ✅ (Gasless supported above ~$5-6 min; both same-chain and cross-chain) |
-| BNB Chain | `bnb` | ✅ | ✅ |
-| Base | `base` | ✅ | ✅ |
-| Arbitrum | `arbitrum` | ✅ | ✅ |
-| Polygon | `matic` | ✅ | ✅ |
-| Morph | `morph` | ✅ | ✅ |
+| Chain | Code | Same-chain | Cross-chain | Gasless Min (USD) |
+|-------|------|-----------|-------------|----------------|
+| Ethereum | `eth` | ✅ | ✅ | $5 |
+| Solana | `sol` | ✅ | ✅ | $5 |
+| BNB Chain | `bnb` | ✅ | ✅ | $5 |
+| Base | `base` | ✅ | ✅ | $5 |
+| Arbitrum | `arbitrum` | ✅ | ✅ | $5 |
+| Polygon | `matic` | ✅ | ✅ | $5 |
+| Morph | `morph` | ✅ | ✅ | $1 |
 
 ### Cross-Chain Limits (Order Mode)
 
@@ -470,8 +485,8 @@ The order is a contract — the user sees the actual order details, confirms, TH
 
 ```
 1. security       → Check token safety (automatic, silent unless issues found)
-2. order-quote    → Get price, market, check no_gas + eip7702Bindend
-3. order-create   → Create order (auto-apply no_gas if available)
+2. order-quote    → Get price, market, check gasless + eip7702Bindend
+3. order-create   → Create order (auto-apply gasless if available)
                      Returns orderId + unsigned tx/signature data
 4. order-status   → Get order details (toAmount is more accurate than quote)
 5. PRESENT        → Show confirmation summary to user (MANDATORY)
@@ -548,7 +563,7 @@ The order is a contract — the user sees the actual order details, confirms, TH
 **Gas mode strategy: ALWAYS try gasless first.**
 
 ```
-1. Always pass --feature no_gas to order-create (regardless of quote features field)
+1. Always pass --feature no_gas to order-create (always try gasless first)
 2. Check response:
    a. Returns `signatures` array → Gasless ✅ proceed with EIP-712 signing
    b. Returns `txs` array (normal transactions) → Gasless NOT supported on this chain
@@ -561,24 +576,24 @@ The order is a contract — the user sees the actual order details, confirms, TH
 **Why always try gasless:**
 - The `features` field in `order-quote` is unreliable (often returns `[]` even when gasless works)
 - The `eip7702Bindend` / `eip7702Contract` fields are more reliable but still not definitive
-- The only sure way to know: pass `no_gas` and check if response has `signatures` or `txs`
-- Cost of trying: zero (order-create with no_gas that falls back to txs is not an error)
+- The only sure way to know: pass `--feature no_gas` and check if response has `signatures` or `txs`
+- Cost of trying: zero (order-create with gasless that falls back to txs is not an error)
 
 **Gasless support by chain (as of 2026-03-04):**
 
-| Chain | Gasless (EIP-7702) | Notes |
-|-------|-------------------|-------|
-| Base | ✅ Supported | Tested, confirmed |
-| Ethereum | ✅ Supported | — |
-| BNB Chain | ✅ Supported | — |
-| Polygon | ✅ Supported | Same-chain confirmed; cross-chain requires 7702 binding first |
-| Arbitrum | ✅ Supported | — |
-| Morph | ✅ Supported | — |
-| Solana | ✅ Supported (min amount) | Solana gasless has a **minimum amount threshold** (~$5-6 USD). Below threshold, quote returns `features: []`. Above threshold, returns `features: ["no_gas"]`. Both same-chain and cross-chain (Sol→EVM) gasless work. |
+| Chain | Gasless (EIP-7702) | Gasless Min (USD) | Notes |
+|-------|-------------------|----------------|-------|
+| Ethereum | ✅ Supported | $5 | — |
+| Solana | ✅ Supported | $5 | Both same-chain and cross-chain (Sol→EVM) work |
+| BNB Chain | ✅ Supported | $5 | Tested, confirmed |
+| Base | ✅ Supported | $5 | Tested, confirmed |
+| Arbitrum | ✅ Supported | $5 | — |
+| Polygon | ✅ Supported | $5 | Same-chain confirmed; cross-chain requires 7702 binding first |
+| Morph | ✅ Supported | $1 | Lowest threshold |
 
 **⚠️ Cross-chain gasless requires source chain 7702 binding.** If the wallet has never done a gasless transaction on the source chain, the first cross-chain order will fall back to normal txs. Do a same-chain gasless swap first to bind 7702, then cross-chain gasless will work.
 
-**Only use gasless when `order-quote` returns `"no_gas"` in `features`.** Do not blindly try — the API accepts the flag but backend execution will fail if unsupported. Some chains (e.g., Solana) have a minimum amount threshold for gasless; if the amount is too small, try increasing it.
+**Only use gasless when `order-quote` returns `"no_gas"` in `features`.** Do not blindly try — the API accepts the flag but backend execution will fail if unsupported. All chains have a minimum amount threshold for gasless ($5 USD, Morph $1); if the amount is too small, try increasing it.
 
 **User override:** If the user explicitly says to use their own gas (e.g., "use my gas", "user gas", "不要 gasless", "用自己的 gas"), do NOT pass `--feature no_gas` to order-create. The order will use normal gas mode instead, and gas is paid from the wallet's native token balance. Show "Gas mode: User Gas (native token)" in the confirmation summary.
 
@@ -592,7 +607,7 @@ The order is a contract — the user sees the actual order details, confirms, TH
 
 **Always use `order-status.toAmount` for the confirmation summary**, not the quote's toAmount. The order-status value is calculated after actual routing and is more accurate.
 
-- When using `no_gas` mode, gas is still deducted from the input. Even the order-status `toAmount` may not fully reflect gas deduction.
+- When using gasless mode, gas is still deducted from the input. Even the order-status `toAmount` may not fully reflect gas deduction.
 - The **actual received amount** is only known after completion via `receiveAmount`.
 - Always present `toAmount` as an estimate: use "~" prefix (e.g., "~1.94 USDT").
 
